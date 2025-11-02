@@ -1,3 +1,46 @@
+**OSM (OpenStreetMap)** est une base de données géographiques créée par des bénévoles. Son contenu est publié sous la **licence ODbL 1.0 (Open Database License)**. Cette licence porte sur les **bases de données** (pas sur les images ou les sites eux-mêmes) et fixe ce que tu peux faire avec les données OSM, ainsi que ce que tu dois en échange.
+
+### Ce que permet l’ODbL
+
+* **Utiliser** les données (les consulter, les interroger).
+* **Partager** la base telle quelle.
+* **Adapter** la base (extractions, nettoyages, enrichissements, restructurations) pour créer une **base dérivée**.
+
+### Ce qu’elle exige
+
+1. **Attribution**
+   Toujours **créditer OSM et ses contributeurs** là où les données apparaissent (pages, apps, API, docs).
+   Exemple simple : « Données © OpenStreetMap contributors, ODbL 1.0 ».
+
+2. **Partage à l’identique (Share-Alike) de la *base dérivée***
+   Si tu **publies** (ou utilises publiquement) une **base dérivée** d’OSM, tu dois la proposer **sous la même licence ODbL**, avec un **accès raisonnable** (ex. un dump téléchargeable).
+
+3. **Ne pas restreindre les libertés de la licence**
+   Tes CGU/conditions ne doivent pas retirer les droits que l’ODbL accorde aux autres.
+
+### Trois notions clés
+
+* **Base dérivée (Adapted Database)** : ta version transformée d’OSM (filtrée, normalisée, fusionnée au point d’être inséparable).
+  → Si rendue publique : attribution **et** partage à l’identique.
+* **Base collective (Collective Database)** : juxtaposition de ta base privée et d’OSM **sans fusionner** au point de n’en faire qu’une seule.
+  → La partie OSM reste sous ODbL, ta partie peut garder sa licence.
+* **Travail produit (Produced Work)** : rendu **non-base** (image, carte raster, PDF).
+  → **Attribution** requise, mais **pas** d’obligation de publier la base sous-jacente.
+
+### “Substantiel”, “usage public” et API
+
+* Extraire ou exposer une **partie substantielle** de la base (quantitativement grande ou qualitativement importante) compte comme **usage public** de la base.
+* Une API qui permet de **reconstituer** des pans substantiels de la donnée est généralement considérée comme une mise à disposition publique de la **base dérivée** → **Share-Alike** requis.
+
+### Appliqué à ton mini-projet (en clair)
+
+* Tu scrapes OSM → tu crées une **base dérivée** (même simple).
+* **Usage interne uniquement** : attribution dans la doc suffit (pas d’obligation de publier la base).
+* **API publique** servant une partie substantielle (liste des restos, exports, etc.) :
+
+  * afficher l’**attribution**, **et**
+  * proposer la **base dérivée** (ex. dump SQLite/CSV) **sous ODbL**.
+
 # Ce que tu dois faire (checklist)
 
 1. **Afficher l’attribution** partout où les données OSM sont visibles ou consommées
