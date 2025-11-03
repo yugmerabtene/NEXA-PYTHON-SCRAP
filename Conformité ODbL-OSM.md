@@ -71,6 +71,9 @@
 
    * Sépare structurellement tes données privées (ex. avis/notes) pour rester en **“base collective”** : la partie OSM reste sous ODbL, ta base séparée garde sa licence. Évite de “fusionner” au point que ce soit une seule base indivisible, sinon Share-Alike s’applique à l’ensemble adapté. ([osmfoundation.org][3])
 
+
+<img width="947" height="649" alt="image" src="https://github.com/user-attachments/assets/7f87024b-14db-47ab-a1a6-668136639a10" />
+
 ---
 
 # Où mettre l’attribution (pratique)
