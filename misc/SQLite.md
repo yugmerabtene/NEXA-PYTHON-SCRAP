@@ -1,418 +1,346 @@
-# Cours complet SQLite (indépendant du projet)
----
-
-## 1) Comprendre SQLite
-
-* **Qu’est-ce que c’est ?**
-  Un SGBD **embarqué** : pas de serveur séparé, la base tient dans **un fichier `.sqlite/.db`**. Parfait pour apps desktop/mobile, scripts, protos, tests, ou petites apps prod.
-* **Forces** : simplicité de déploiement, rapidité locale, zéro admin serveur, ACID, transactions, intégrité.
-* **Limites** : concurrence **écriture** limitée (un seul writer à la fois), pas de comptes utilisateurs/ACL internes (sécurité = OS/app), pas de sharding ni de réplication native.
-
-**Outils** : binaire `sqlite3` (CLI), bibliothèques disponibles dans tous les langages (Python `sqlite3`, Go `database/sql`, etc.).
+# COURS COMPLET : SQLite avec Python
 
 ---
 
-## 2) Modèle de stockage & architecture
+## 1. Introduction à SQLite
 
-* **Fichier unique** : pages B-Tree pour tables & index.
-* **Journaux** : modes `DELETE` (par défaut historique), `WAL` (Write-Ahead Logging) recommandé pour **lectures et écritures concurrentes** (lectures non bloquées pendant l’écriture).
-* **ACID** : transactions atomiques, cohérentes, isolées, durables.
-* **Isolation** : par défaut “**SERIALIZABLE**” (sauf si `read_uncommitted=ON`).
-* **Concurrence** : *lecteurs multiples*, *un seul écrivain* à la fois (mais rapide sur machine locale).
+SQLite est un moteur de base de données intégré, sans serveur et léger.
+Les données sont stockées dans un seul fichier `.db` sur le disque.
+C’est une base idéale pour :
 
----
-
-## 3) Types & règles de typage (spécificités SQLite)
-
-* **Storage classes** : `NULL`, `INTEGER`, `REAL`, `TEXT`, `BLOB`.
-* **Affinité de colonne** : `INTEGER`, `TEXT`, `NUMERIC`, `REAL`, `BLOB`. SQLite est **dynamiquement typé** : une colonne à affinité TEXT peut stocker un entier… mais **applique l’affinité** lors des opérations.
-* **Tables STRICT** (recommandé quand dispo) : imposent le type déclaré, réduisent les surprises.
-* **Dates/heures** : stocker en **TEXT ISO-8601** (`YYYY-MM-DD hh:mm:ss`), ou **INTEGER** (epoch), au choix ; pas de type “DATE” natif.
-
-> Bonne pratique : choisissez une **convention** (ISO-8601 TEXT ou epoch INT) et tenez-vous-y.
+* Les petits projets ou prototypes
+* Les applications locales
+* Les tests ou l’enseignement
+* Le web scraping
 
 ---
 
-## 4) Schéma & contraintes d’intégrité
+## 2. Vérifier que SQLite est disponible
 
-### 4.1 Créer des tables
-
-```sql
-CREATE TABLE IF NOT EXISTS client (
-  id         INTEGER PRIMARY KEY,   -- alias implicite ROWID
-  email      TEXT    NOT NULL UNIQUE,
-  nom        TEXT    NOT NULL,
-  created_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now'))
-);
+```python
+import sqlite3
+print(sqlite3.sqlite_version)
 ```
 
-* `INTEGER PRIMARY KEY` → alias du **ROWID** (clé rapide).
-* `UNIQUE`, `NOT NULL`, `CHECK`, `FOREIGN KEY` : **toujours** préférer les contraintes **au plus près des données**.
+### Explication détaillée :
 
-### 4.2 Clés étrangères
+* `import sqlite3` : importe le module intégré à Python qui permet de manipuler SQLite.
+* `sqlite3.sqlite_version` : renvoie la version de SQLite utilisée par Python.
+* `print(...)` : affiche la version dans le terminal.
 
-```sql
-PRAGMA foreign_keys = ON;           -- à activer à chaque connexion
-CREATE TABLE commande (
-  id        INTEGER PRIMARY KEY,
-  client_id INTEGER NOT NULL REFERENCES client(id) ON DELETE CASCADE,
-  total     REAL    NOT NULL CHECK(total >= 0)
-);
-```
-
-> **Attention** : l’enforcement des **FK** dépend de `PRAGMA foreign_keys=ON` (souvent **off** par défaut selon les bindings).
-
-### 4.3 Colonnes générées (dérivées)
-
-```sql
-CREATE TABLE produit (
-  id       INTEGER PRIMARY KEY,
-  prix_ht  REAL NOT NULL,
-  tva      REAL NOT NULL CHECK(tva BETWEEN 0 AND 1),
-  prix_ttc REAL GENERATED ALWAYS AS (prix_ht * (1 + tva)) VIRTUAL
-);
-```
-
-* `VIRTUAL` (calcul à la lecture), `STORED` (stocké). Pratique pour dériver des champs (évite triggers).
+SQLite est intégré nativement à Python (aucune installation supplémentaire n’est nécessaire).
 
 ---
 
-## 5) Requêtes SQL essentielles
-
-### 5.1 CRUD de base
-
-```sql
--- INSERT
-INSERT INTO client (email, nom) VALUES ('a@x.fr', 'Alice');
-
--- SELECT
-SELECT id, email, nom FROM client WHERE email LIKE '%@x.fr' ORDER BY id DESC LIMIT 10 OFFSET 0;
-
--- UPDATE
-UPDATE client SET nom = 'Alice B.' WHERE id = 1;
-
--- DELETE
-DELETE FROM client WHERE id = 1;
-```
-
-### 5.2 UPSERT (résoudre les doublons proprement)
-
-```sql
-INSERT INTO client (id, email, nom)
-VALUES (1, 'a@x.fr', 'Alice')
-ON CONFLICT(id) DO UPDATE SET
-  email = excluded.email,
-  nom   = excluded.nom;
-```
-
-### 5.3 Agrégations & groupements
-
-```sql
-SELECT client_id, COUNT(*) AS nb_cmd, SUM(total) AS ca
-FROM commande
-GROUP BY client_id
-HAVING SUM(total) > 1000
-ORDER BY ca DESC;
-```
-
-### 5.4 JOINS
-
-```sql
-SELECT c.email, cmd.id, cmd.total
-FROM client c
-JOIN commande cmd ON cmd.client_id = c.id
-WHERE cmd.total >= 50;
-```
-
-* Types : `INNER`, `LEFT` (droit utile pour “clients sans commande”), `CROSS`. (Pas de `RIGHT/FULL` natifs → simuler.)
-
----
-
-## 6) CTE, récursif & fenêtres
-
-### 6.1 CTE (WITH)
-
-```sql
-WITH top_clients AS (
-  SELECT client_id, SUM(total) ca
-  FROM commande
-  GROUP BY client_id
-  ORDER BY ca DESC
-  LIMIT 10
-)
-SELECT c.id, c.email, t.ca
-FROM top_clients t JOIN client c ON c.id = t.client_id;
-```
-
-### 6.2 Récursif (ex. arborescence catégories)
-
-```sql
-WITH RECURSIVE tree(id, parent_id, lvl) AS (
-  SELECT id, parent_id, 0 FROM categorie WHERE parent_id IS NULL
-  UNION ALL
-  SELECT c.id, c.parent_id, t.lvl+1
-  FROM categorie c JOIN tree t ON c.parent_id = t.id
-)
-SELECT * FROM tree;
-```
-
-### 6.3 Fenêtres (window functions)
-
-```sql
-SELECT client_id, total,
-       ROW_NUMBER() OVER(PARTITION BY client_id ORDER BY total DESC) AS rk
-FROM commande;
-```
-
-> Super pour classements, LAG/LEAD, moyennes glissantes, etc.
-
----
-
-## 7) Index & performance
-
-### 7.1 Créer les bons index
-
-```sql
-CREATE INDEX IF NOT EXISTS idx_commande_client ON commande(client_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_client_email ON client(email);
-CREATE INDEX IF NOT EXISTS idx_commande_total ON commande(total);
-```
-
-* Index = **accélère** `WHERE`/`JOIN`/`ORDER BY` mais **ralentit** les inserts/updates.
-* **Cibler** les colonnes **filtrées** ou **jointes** fréquemment.
-
-### 7.2 Index d’expression & partiel
-
-```sql
--- Expression
-CREATE INDEX IF NOT EXISTS idx_email_lower ON client( lower(email) );
--- Partiel (si utile) : seulement clients actifs
-CREATE INDEX IF NOT EXISTS idx_cmd_total_pos ON commande(total) WHERE total > 0;
-```
-
-### 7.3 Lire les plans
-
-```sql
-EXPLAIN QUERY PLAN
-SELECT * FROM commande WHERE client_id = 42 AND total > 100;
-```
-
-> Cherchez les **SCAN** complets non désirés ; ajustez les index.
-
----
-
-## 8) Transactions & WAL
-
-### 8.1 Transactions
-
-```sql
-BEGIN IMMEDIATE;     -- verrouille en écriture dès le début (évite surprise plus tard)
-  -- plusieurs INSERT/UPDATE ici
-COMMIT;
-```
-
-* `DEFERRED` (par défaut) : verrouillage quand nécessaire.
-* `IMMEDIATE` : réserve l’écriture tout de suite.
-* `EXCLUSIVE` : verrou plus strict.
-
-### 8.2 WAL (Write-Ahead Logging)
-
-```sql
-PRAGMA journal_mode = WAL;      -- à faire une fois
-PRAGMA synchronous  = NORMAL;   -- compromis perf/sûreté (FULL si durabilité stricte)
-```
-
-* **Avantage majeur** : **lectures non bloquées** pendant écriture.
-* Penser au **checkpoint** (automatique en général) sur gros fichiers WAL.
-
-### 8.3 Timeouts & busy handlers
-
-```sql
-PRAGMA busy_timeout = 5000;     -- attend jusqu’à 5s avant “database is locked”
-```
-
----
-
-## 9) Extensions & tables virtuelles
-
-### 9.1 JSON1 (manipuler du JSON)
-
-```sql
-SELECT json_extract(payload, '$.client.email') AS email
-FROM evenement
-WHERE json_extract(payload, '$.type') = 'signup';
-```
-
-* Possibilité d’**indexer** sur une expression JSON :
-
-```sql
-CREATE INDEX idx_evt_email ON evenement( json_extract(payload, '$.client.email') );
-```
-
-### 9.2 FTS5 (Full-Text Search)
-
-```sql
-CREATE VIRTUAL TABLE doc USING fts5(title, body);
-INSERT INTO doc (title, body) VALUES ('hello', 'search engines are fun');
-SELECT * FROM doc WHERE doc MATCH 'search';
-```
-
-* Supporte opérateurs, rang, surlignage.
-
-### 9.3 Autres (selon besoins)
-
-`R*Tree` (spatial simple), `csv` (table virtuelle sur CSV), `dbstat`, etc.
-
----
-
-## 10) Sécurité & bonnes pratiques
-
-* **Paramétrer** côté app (anti-injection) : `?` (bindings) — **jamais** formater du SQL avec des chaînes.
-* **Permissions du fichier** : OS (chmod/ACL), pas d’utilisateurs internes.
-* **Chiffrement** : pas natif → utiliser **SQLCipher** ou chiffrer applicativement les colonnes sensibles.
-* **Extensions** : chargement d’extensions **désactivé** par défaut dans de nombreux bindings (plus sûr).
-* **Backups** : utiliser l’API de backup (`VACUUM INTO`, `.backup`), pas une copie brute en plein write.
-
----
-
-## 11) Maintenance
-
-* **Intégrité** : `PRAGMA integrity_check;`
-* **Compactage** : `VACUUM;` (réduit la taille, réorganise — à faire hors charge)
-* **Statistiques** : `ANALYZE;`
-* **Migration** : ajouter colonnes ok ; pour des modifs lourdes, recréer table + copier (pattern “shadow table”).
-
----
-
-## 12) Import/Export (CLI)
-
-```sql
--- Dans le shell sqlite3
-.mode csv
-.import data.csv ma_table
-.headers on
-.output export.csv
-SELECT * FROM ma_table;
-.output stdout
-```
-
-* JSON : soit via requêtes `json_object/ json_group_array`, soit côté application.
-
----
-
-## 13) Intégration Python (aperçu idiomatique)
+## 3. Créer une base de données et une table
 
 ```python
 import sqlite3
 
-conn = sqlite3.connect("app.db", isolation_level=None)  # autocommit off si None ? (selon version)
-conn.execute("PRAGMA foreign_keys=ON")
-conn.execute("PRAGMA journal_mode=WAL")
-conn.execute("PRAGMA synchronous=NORMAL")
+# Connexion à la base (créée si inexistante)
+conn = sqlite3.connect("livres.db")
 
-with conn:  # transaction
-    conn.executemany(
-        "INSERT INTO client(email, nom) VALUES(?, ?)",
-        [("a@x.fr","Alice"),("b@y.fr","Bob")]
-    )
+# Création du curseur
+cur = conn.cursor()
 
-cur = conn.execute("SELECT id, email FROM client WHERE email LIKE ?", ("%@x.%",))
-for row in cur:
-    print(row)
+# Création d’une table
+cur.execute('''
+CREATE TABLE IF NOT EXISTS livres (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    titre TEXT NOT NULL,
+    auteur TEXT,
+    prix REAL,
+    stock INTEGER
+)
+''')
+
+# Validation et fermeture
+conn.commit()
 conn.close()
 ```
 
-**Points clés** : `with conn` = **transaction** ; `?` = **paramètres** ; `executemany` = **batch**.
+### Explication détaillée :
+
+1. `sqlite3.connect("livres.db")` : crée une nouvelle base appelée `livres.db` si elle n’existe pas déjà, ou s’y connecte sinon.
+   Ce fichier contient toutes les tables et les données.
+
+2. `conn.cursor()` : crée un objet curseur qui sert d’interface pour exécuter les requêtes SQL.
+
+3. `cur.execute('CREATE TABLE ...')` : envoie la requête SQL à la base pour créer une table.
+
+   * `IF NOT EXISTS` : empêche une erreur si la table existe déjà.
+   * `id INTEGER PRIMARY KEY AUTOINCREMENT` : colonne identifiant unique auto-incrémentée.
+   * `titre TEXT NOT NULL` : champ texte obligatoire.
+   * `prix REAL` : champ numérique à virgule flottante.
+   * `stock INTEGER` : champ entier.
+
+4. `conn.commit()` : enregistre définitivement les changements.
+
+5. `conn.close()` : ferme proprement la connexion à la base.
 
 ---
 
-## 14) Exercices (avec solutions)
+## 4. Insérer une donnée dans la table
 
-### Ex.1 — Schéma & contraintes
+```python
+import sqlite3
 
-**Énoncé** : créez `client(id PK, email UNIQUE NOT NULL, nom NOT NULL)` et `commande(id PK, client_id FK→client(id), total≥0, created_at par défaut maintenant)`. Activez FK.
-**Solution** :
+conn = sqlite3.connect("livres.db")
+cur = conn.cursor()
 
-```sql
-PRAGMA foreign_keys=ON;
-CREATE TABLE client (
-  id INTEGER PRIMARY KEY,
-  email TEXT NOT NULL UNIQUE,
-  nom TEXT NOT NULL
-);
-CREATE TABLE commande (
-  id INTEGER PRIMARY KEY,
-  client_id INTEGER NOT NULL REFERENCES client(id) ON DELETE CASCADE,
-  total REAL NOT NULL CHECK(total >= 0),
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now'))
-);
+cur.execute("INSERT INTO livres (titre, auteur, prix, stock) VALUES (?, ?, ?, ?)",
+            ("Les Misérables", "Victor Hugo", 12.5, 10))
+
+conn.commit()
+conn.close()
 ```
 
-### Ex.2 — Index & requêtes
+### Explication détaillée :
 
-**Énoncé** : créez l’index qui accélère `SELECT * FROM commande WHERE client_id=? AND total>=? ORDER BY created_at DESC LIMIT 20;`
-**Solution** :
-
-```sql
-CREATE INDEX IF NOT EXISTS idx_cmd_client_total_date
-ON commande(client_id, total, created_at DESC);
-```
-
-### Ex.3 — UPSERT
-
-**Énoncé** : insérez un client `(id=1, email='a@x.fr', nom='Alice')`; si déjà là, mettez à jour `email` et `nom`.
-**Solution** :
-
-```sql
-INSERT INTO client(id, email, nom)
-VALUES (1, 'a@x.fr', 'Alice')
-ON CONFLICT(id) DO UPDATE SET
-  email = excluded.email,
-  nom   = excluded.nom;
-```
-
-### Ex.4 — CTE + agrégations
-
-**Énoncé** : top 5 des clients par CA (somme `total`).
-**Solution** :
-
-```sql
-WITH ca AS (
-  SELECT client_id, SUM(total) AS s FROM commande GROUP BY client_id
-)
-SELECT client_id, s FROM ca ORDER BY s DESC LIMIT 5;
-```
-
-### Ex.5 — Fenêtres
-
-**Énoncé** : pour chaque client, numeroter ses commandes (ordre `created_at` décroissant).
-**Solution** :
-
-```sql
-SELECT id, client_id, created_at,
-       ROW_NUMBER() OVER(PARTITION BY client_id ORDER BY created_at DESC) AS rk
-FROM commande;
-```
-
-### Ex.6 — JSON1
-
-**Énoncé** : table `event(payload JSON)`, sortir tous les emails `$.user.email`.
-**Solution** :
-
-```sql
-SELECT json_extract(payload, '$.user.email') AS email
-FROM event
-WHERE json_extract(payload,'$.user.email') IS NOT NULL;
-```
+* `"INSERT INTO ... VALUES (...)"` : insère une nouvelle ligne dans la table `livres`.
+* Les `?` servent de **paramètres sécurisés** appelés *placeholders* pour éviter les injections SQL.
+* Les valeurs `("Les Misérables", "Victor Hugo", 12.5, 10)` remplacent les `?` dans l’ordre.
+* `conn.commit()` : valide l’insertion.
+* `conn.close()` : ferme la base.
 
 ---
 
-## 15) Règles d’or (résumé)
+## 5. Insérer plusieurs lignes à la fois
 
-* **Schéma clair**, contraintes **au plus près** (NOT NULL, CHECK, UNIQUE, FK).
-* **WAL** pour scraper/API ou multi-lecteurs, `busy_timeout` non nul.
-* **Index ciblés**, `EXPLAIN QUERY PLAN` pour valider.
-* **Transactions** en batch, `executemany` côté appli.
-* **Sécurité** : paramètres `?`, permissions fichier, chiffrement externe si besoin.
-* **Maintenance** : `integrity_check`, `ANALYZE`, `VACUUM`, backups via API.
+```python
+livres = [
+    ("1984", "George Orwell", 9.9, 5),
+    ("Le Petit Prince", "Antoine de Saint-Exupéry", 8.5, 20),
+    ("Harry Potter", "J.K. Rowling", 15.0, 8)
+]
+
+conn = sqlite3.connect("livres.db")
+cur = conn.cursor()
+cur.executemany("INSERT INTO livres (titre, auteur, prix, stock) VALUES (?, ?, ?, ?)", livres)
+conn.commit()
+conn.close()
+```
+
+### Explication détaillée :
+
+* `livres` : liste de tuples, chaque tuple correspond à une ligne.
+* `executemany()` : exécute la même requête pour chaque élément de la liste.
+* `commit()` : enregistre les modifications.
+* `close()` : ferme la base.
+
+---
+
+## 6. Lire les données
+
+```python
+conn = sqlite3.connect("livres.db")
+cur = conn.cursor()
+cur.execute("SELECT * FROM livres")
+resultats = cur.fetchall()
+
+for ligne in resultats:
+    print(ligne)
+
+conn.close()
+```
+
+### Explication détaillée :
+
+* `"SELECT * FROM livres"` : récupère toutes les colonnes de la table `livres`.
+* `fetchall()` : renvoie une liste contenant toutes les lignes sous forme de tuples.
+* La boucle `for` parcourt chaque ligne et l’affiche.
+
+Autres méthodes :
+
+* `fetchone()` : récupère une seule ligne.
+* `fetchmany(5)` : récupère un nombre défini de lignes.
+
+---
+
+## 7. Filtrer les données avec WHERE
+
+```python
+conn = sqlite3.connect("livres.db")
+cur = conn.cursor()
+cur.execute("SELECT titre, prix FROM livres WHERE prix > ? ORDER BY prix DESC", (10,))
+for ligne in cur.fetchall():
+    print(ligne)
+conn.close()
+```
+
+### Explication détaillée :
+
+* `SELECT titre, prix` : ne récupère que les colonnes `titre` et `prix`.
+* `WHERE prix > ?` : filtre les lignes où le prix est supérieur à 10.
+* `(10,)` : tuple contenant la valeur de remplacement pour `?`.
+* `ORDER BY prix DESC` : trie les résultats par prix décroissant.
+
+---
+
+## 8. Modifier et supprimer des données
+
+```python
+conn = sqlite3.connect("livres.db")
+cur = conn.cursor()
+
+cur.execute("UPDATE livres SET stock = stock - 1 WHERE id = ?", (1,))
+cur.execute("DELETE FROM livres WHERE id = ?", (2,))
+
+conn.commit()
+conn.close()
+```
+
+### Explication détaillée :
+
+* `UPDATE ... SET ... WHERE ...` : modifie des enregistrements existants.
+  Ici, on décrémente la quantité du livre dont l’ID est 1.
+* `DELETE FROM ... WHERE ...` : supprime le livre dont l’ID est 2.
+* `commit()` : sauvegarde les changements.
+
+---
+
+## 9. Utiliser le contexte `with` pour plus de sécurité
+
+```python
+import sqlite3
+
+with sqlite3.connect("livres.db") as conn:
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM livres")
+    for ligne in cur.fetchall():
+        print(ligne)
+```
+
+### Explication détaillée :
+
+* Le mot-clé `with` crée un bloc de contexte sécurisé.
+* Quand le bloc se termine :
+
+  * `conn.close()` est automatiquement appelé.
+  * `commit()` est exécuté automatiquement si aucune erreur ne s’est produite.
+  * En cas d’erreur, un `rollback()` (annulation) est effectué.
+
+---
+
+## 10. Exporter les données vers un fichier CSV
+
+```python
+import csv, sqlite3
+
+with sqlite3.connect("livres.db") as conn:
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM livres")
+    rows = cur.fetchall()
+
+    with open("export.csv", "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["ID", "Titre", "Auteur", "Prix", "Stock"])
+        writer.writerows(rows)
+
+print("Export terminé.")
+```
+
+### Explication détaillée :
+
+* `import csv` : module pour manipuler des fichiers CSV.
+* `cur.execute("SELECT * FROM livres")` : récupère les données à exporter.
+* `open("export.csv", "w", newline="", encoding="utf-8")` : ouvre ou crée un fichier CSV en écriture.
+* `writer.writerow([...])` : écrit la première ligne (en-têtes).
+* `writer.writerows(rows)` : écrit toutes les lignes de la base dans le fichier.
+* `newline=""` : évite les sauts de lignes inutiles sous Windows.
+
+---
+
+## 11. Importer un fichier CSV dans la base
+
+```python
+import csv, sqlite3
+
+with sqlite3.connect("livres.db") as conn:
+    cur = conn.cursor()
+    with open("import.csv", "r", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        next(reader)  # saute la ligne d’en-tête
+        cur.executemany("INSERT INTO livres (titre, auteur, prix, stock) VALUES (?, ?, ?, ?)", reader)
+    conn.commit()
+```
+
+### Explication détaillée :
+
+* `csv.reader(f)` : lit le contenu du fichier CSV ligne par ligne.
+* `next(reader)` : ignore la première ligne (les en-têtes).
+* `executemany()` : insère chaque ligne du CSV dans la base.
+* `commit()` : valide les insertions.
+
+---
+
+## 12. Créer une fonction Python réutilisable dans SQLite
+
+```python
+def tva(prix):
+    return round(prix * 1.2, 2)
+
+conn = sqlite3.connect("livres.db")
+conn.create_function("TTC", 1, tva)
+cur = conn.cursor()
+
+cur.execute("SELECT titre, TTC(prix) FROM livres")
+for row in cur.fetchall():
+    print(row)
+```
+
+### Explication détaillée :
+
+* `def tva(prix)` : définit une fonction Python qui calcule le prix TTC (20 % de TVA).
+* `conn.create_function("TTC", 1, tva)` : déclare la fonction Python `tva()` comme fonction SQL utilisable dans les requêtes.
+  Le `1` signifie que la fonction prend un seul argument.
+* `"SELECT titre, TTC(prix)"` : exécute une requête SQL appelant la fonction personnalisée.
+
+---
+
+## 13. Gestion des erreurs et exceptions
+
+```python
+import sqlite3
+
+try:
+    conn = sqlite3.connect("livres.db")
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM livres")
+except sqlite3.Error as e:
+    print("Erreur SQLite :", e)
+finally:
+    conn.close()
+```
+
+### Explication détaillée :
+
+* Le bloc `try` contient le code principal susceptible de générer une erreur.
+* `except sqlite3.Error as e` capture toutes les erreurs liées à SQLite et affiche un message d’erreur.
+* `finally` : s’exécute toujours, qu’il y ait une erreur ou non.
+  Il est utilisé ici pour fermer la connexion.
+
+---
+
+## 14. Accéder aux résultats sous forme de dictionnaires
+
+```python
+conn = sqlite3.connect("livres.db")
+conn.row_factory = sqlite3.Row
+cur = conn.cursor()
+cur.execute("SELECT * FROM livres")
+for row in cur.fetchall():
+    print(dict(row))
+conn.close()
+```
+
+### Explication détaillée :
+
+* `conn.row_factory = sqlite3.Row` : transforme chaque ligne en un objet de type `Row` (clé/valeur).
+* `dict(row)` : convertit cet objet en dictionnaire Python.
+  Exemple de sortie :
+
+  ```python
+  {'id': 1, 'titre': '1984', 'auteur': 'George Orwell', 'prix': 9.9, 'stock': 5}
+  ```
 
